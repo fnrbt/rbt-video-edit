@@ -66,3 +66,74 @@ module Video =
     let frameAt (src: VideoSource) (t: float<s>) : Framebuffer =
         let i = int (float t * src.Fps)
         src.Frames.[max 0 (min (src.Frames.Length - 1) i)]
+
+    /// A STREAMING footage source: decodes frames from ffmpeg on demand into a bounded sliding
+    /// window instead of loading the whole clip into RAM. Memory is ~windowSize×W×H×4 regardless
+    /// of clip length, so 4K / minutes-long footage no longer costs gigabytes. Thread-safe (the
+    /// parallel renderer fetches frames from multiple threads); assumes roughly-MONOTONIC access
+    /// (a forward render) — a backward jump past the window triggers a re-seek (fine but slower),
+    /// so prefer the in-RAM `loadCached` for heavy random access / freeze-frames on short clips.
+    type StreamSource(path: string, startSec: float, durSec: float, w: int, h: int, fps: int) =
+        let frameBytes = w * h * 4
+        let gate = obj ()
+        let window = System.Collections.Generic.Dictionary<int, Framebuffer>()
+        let order = System.Collections.Generic.Queue<int>()
+        let windowMax = 64
+        let mutable proc : Process = null
+        let mutable stream : IO.Stream = null
+        let mutable decodePos = 0                 // next clip-frame index the stream will yield
+        let mutable lastFb : Framebuffer = { W = w; H = h; Px = Memory(Array.zeroCreate<uint32> (w * h)) }
+        let startAt (atFrame: int) =
+            if not (isNull proc) then (try proc.Kill() with _ -> ()); proc.Dispose()
+            let psi = ProcessStartInfo("ffmpeg")
+            psi.UseShellExecute <- false; psi.RedirectStandardOutput <- true; psi.RedirectStandardError <- true
+            let ss = startSec + float atFrame / float fps
+            let args = ResizeArray<string>([ "-v"; "error" ])
+            if ss > 0.0 then args.AddRange [| "-ss"; string ss |]
+            args.AddRange [| "-i"; path
+                             "-vf"; sprintf "fps=%d,scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d" fps w h w h
+                             "-f"; "rawvideo"; "-pix_fmt"; "bgra"; "pipe:1" |]
+            args |> Seq.iter psi.ArgumentList.Add
+            proc <- Process.Start psi
+            stream <- proc.StandardOutput.BaseStream
+            decodePos <- atFrame
+        let readOne () : Framebuffer option =
+            let buf = Array.zeroCreate<byte> frameBytes
+            let mutable off = 0
+            let mutable eof = false
+            while not eof && off < frameBytes do
+                let r = stream.Read(buf, off, frameBytes - off)
+                if r <= 0 then eof <- true else off <- off + r
+            if off < frameBytes then None
+            else
+                let arr = Array.zeroCreate<uint32> (w * h)
+                Buffer.BlockCopy(buf, 0, arr, 0, frameBytes)
+                Some { W = w; H = h; Px = Memory(arr) }
+        member _.W = w
+        member _.H = h
+        member _.Path = path
+        member _.Start = startSec * 1.0<s>
+        member _.Duration : float<s> = durSec * 1.0<s>
+        member _.FrameAt(t: float<s>) : Framebuffer =
+            let i = max 0 (int (float t * float fps))
+            lock gate (fun () ->
+                match window.TryGetValue i with
+                | true, fb -> fb
+                | _ ->
+                    if isNull proc || i < decodePos then startAt i      // first use, or a backward jump
+                    let mutable result = lastFb
+                    let mutable going = true
+                    while going && decodePos <= i do
+                        match readOne () with
+                        | Some fb ->
+                            window.[decodePos] <- fb; order.Enqueue decodePos
+                            lastFb <- fb
+                            if decodePos = i then result <- fb
+                            decodePos <- decodePos + 1
+                            while order.Count > windowMax do window.Remove(order.Dequeue()) |> ignore
+                        | None -> going <- false                        // EOF → freeze on last frame
+                    result)
+
+    /// Open a streaming footage source for a [startSec, startSec+durSec) slice at w×h / fps.
+    let stream (path: string) (startSec: float) (durSec: float) (w: int) (h: int) (fps: int) : StreamSource =
+        StreamSource(path, startSec, durSec, w, h, fps)

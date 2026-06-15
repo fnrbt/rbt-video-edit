@@ -19,6 +19,7 @@ module Diff =
         | Mask _ -> "mask" | Reframe _ -> "reframe" | Speed _ -> "speed" | Apply (e, _) -> "fx:" + e.Name
         | Between (t, _, _) -> "transition:" + t.Name | Component (_, r) -> "component:" + r.Name | Inst r -> "inst:" + r.Name
         | Section (n, _, _) -> "section:" + n
+        | TimeMap _ -> "timemap" | Blended (m, _) -> "blend:" + sprintf "%A" m | Place3D _ -> "place3d"
 
     let diff (before: Clip) (after: Clip) : string list =
         let out = ResizeArray<string>()
@@ -64,8 +65,9 @@ module Diff =
                 go path ca cb
             | Shift (ca, da), Shift (cb, db) -> durChg path "shift" da db; go path ca cb
             | Speed (ca, fa), Speed (cb, fb) -> (if fa <> fb then out.Add(sprintf "~ %s speed: %.3g → %.3g" path fa fb)); go path ca cb
-            | Transform (ca, _), Transform (cb, _) | Place (ca, _), Place (cb, _)
-            | Mask (ca, _), Mask (cb, _) | Reframe (ca, _), Reframe (cb, _) -> go path ca cb
+            | Transform (ca, _), Transform (cb, _) | Place (ca, _), Place (cb, _) | Place3D (ca, _), Place3D (cb, _)
+            | Mask (ca, _), Mask (cb, _) | Reframe (ca, _), Reframe (cb, _)
+            | Blended (_, ca), Blended (_, cb) | TimeMap (ca, _), TimeMap (cb, _) -> go path ca cb
             | SolidBg (da, ca), SolidBg (db, cb) ->
                 durChg path "solidBg" da db
                 if showParam (PColor ca) <> showParam (PColor cb) then out.Add(sprintf "~ %s solidBg.color: %s → %s" path (showParam (PColor ca)) (showParam (PColor cb)))

@@ -10,6 +10,7 @@
     <Compile Include="Core.fs" />
     <Compile Include="Video.fs" />
     <Compile Include="Anim.fs" />
+    <Compile Include="Motion.fs" />
     <Compile Include="Theme.fs" />
     <Compile Include="Components.fs" />
     <Compile Include="Clip.fs" />

@@ -41,10 +41,19 @@ module TimelineView =
                 let it = go start inner
                 { it with Label = name; Kind = KSection; Adorns = (if en then it.Adorns else "muted" :: it.Adorns) }
             | Place (inner, _) -> adorn "place" (go start inner)
+            | Place3D (inner, _) -> adorn "3d" (go start inner)
             | Mask (inner, _) -> adorn "mask" (go start inner)
             | Reframe (inner, _) -> adorn "crop" (go start inner)
             | Transform (inner, _) -> adorn "xform" (go start inner)
             | Speed (inner, f) -> adorn (sprintf "%.2gx" f) (go start inner)
+            | TimeMap (inner, w) ->
+                let lbl =
+                    match w with
+                    | Ramp (s0, s1) -> sprintf "ramp %.2g→%.2gx" s0 s1
+                    | Freeze _ -> "freeze" | Reverse -> "reverse" | Remap _ -> "remap"
+                let it = go start inner
+                { it with Dur = duration c; Adorns = it.Adorns @ [ lbl ] }
+            | Blended (mode, inner) -> adorn ("blend:" + sprintf "%A" mode) (go start inner)
             | Apply (eff, inner) -> adorn ("fx:" + eff.Name) (go start inner)
             | Trim (inner, _, l) -> { go start inner with Dur = l }
             | Shift (inner, d) -> go (start + d) inner

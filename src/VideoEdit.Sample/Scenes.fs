@@ -656,6 +656,178 @@ let difftest () =
     | changes -> for c in changes do printfn "  %s" c
     printfn "=== end diff ===\n"
 
+// ════════════════════ COMPOSITIONAL GAPS — blend / time-remap / audio crossfade ════════════════════
+let gaps () =
+    let w, h, fps = 1280, 720, 30
+
+    // 1. speed RAMP 1×→2× on footage WITH its own audio (audio retimes at the average tempo).
+    let ramped =
+        videoSnd (Video.loadClip (asset "city.mp4") 0.0 3.0 w h fps)
+        |> timeRamp 1.0 2.0
+
+    // 2. REVERSE — play footage backwards (audio dropped, no constant-tempo mapping).
+    let rev = videoFor 2.0<s> (Video.loadClip (asset "bunny.mp4") 1.0 2.0 w h fps) |> reverse
+
+    // 3. FREEZE FRAME — hold source t=1s for 1.5s.
+    let froze = freezeAt 1.0<s> 1.5<s> (videoFor 2.0<s> (Video.loadClip (asset "sintel.mp4") 1.0 2.0 w h fps))
+
+    // 4. BLEND — screen a moving glow onto footage (Screen lightens where the glow is).
+    let glow =
+        graphic 2.5<s> (fun f t ->
+            let cx = f.W * (0.3 + 0.4 * float t / 2.5)
+            aa [ FillCircle(vec2 cx (f.H / 2.0), 180.0<px>, Color.rgb 255uy 210uy 140uy)
+                 FillCircle(vec2 (f.W - cx) (f.H / 2.0), 120.0<px>, Color.rgb 140uy 200uy 255uy) ])
+    let blended = layer (videoFor 2.5<s> (Video.loadClip (asset "city.mp4") 2.0 2.5 w h fps)) [ screen glow ]
+
+    // 5. CROSSFADE with AUDIO crossfade — two audio-bearing clips; tail fades out, head fades in.
+    let cityA = videoSnd (Video.loadClip (asset "city.mp4") 0.0 3.0 w h fps)
+    let cityB = videoSnd (Video.loadClip (asset "city.mp4") 5.0 3.0 w h fps)
+    let xfade = crossfade 1.0<s> cityA cityB
+
+    let full = concat [ ramped; rev; froze; blended; xfade ]
+    renderToMp4 (cfg w h fps "gaps.mp4") full
+
+// ════════════════════ SCENE FOLD — a Scene `sub` clip leaf keeps its audio ════════════════════
+let scenefold () =
+    let w, h, fps = 1280, 720, 30
+    // A footage sub-timeline WITH its own audio, placed + animated as a Scene node. Pre-fold this
+    // lowered to a silent Graphic; now it lowers to Place/Over, so the audio survives.
+    let pip =
+        Scene.sub (videoSnd (Video.loadClip (asset "city.mp4") 0.0 2.5 w h fps))
+        |> Scene.scaleTo 0.5 |> Scene.at -260.0 -110.0
+        |> Scene.enterSlide -420.0 0.0 0.6
+    let bg = videoFor 2.5<s> (Video.loadClip (asset "bunny.mp4") 0.0 2.5 w h fps) |> tint Color.black 0.3
+    renderToMp4 (cfg w h fps "scenefold.mp4") (layer bg [ Scene.clip 2.5<s> pip ])
+
+// ════════════════════ INCREMENTAL RENDER — re-render only the edited section ════════════════════
+let cachetest () =
+    let w, h, fps = 1280, 720, 30
+    let label txt col = comp "centeredLabel" [ "text", PStr txt; "size", PFloat 120.0; "color", PColor col ] 2.0<s>
+    let doc mid midCol =
+        layer (solidBg 6.0<s> (Color.rgb 16uy 16uy 24uy))
+              [ concat [ label "INTRO" Theme.gold
+                         (label mid midCol |> fadeIn 0.3<s>)
+                         label "OUTRO" Theme.gold ] ]
+    let total = int (6.0 * float fps)
+    let cache = Render.FrameCache()
+    // v1 — cold render (everything)
+    let sw1 = System.Diagnostics.Stopwatch.StartNew()
+    let r1 = Render.renderToMp4Cached (cfg w h fps "cache_v1.mp4") (doc "MIDDLE" Theme.red) cache
+    sw1.Stop()
+    // edit ONLY the middle section (2–4s): invalidate that range, reuse intro/outro from cache
+    cache.InvalidateRange(2.0<s>, 4.0<s>, fps)
+    let sw2 = System.Diagnostics.Stopwatch.StartNew()
+    let r2 = Render.renderToMp4Cached (cfg w h fps "cache_v2.mp4") (doc "EDITED" (Color.rgb 80uy 160uy 255uy)) cache
+    sw2.Stop()
+    // control: render v2 cold (fresh cache) for a correctness comparison
+    Render.renderToMp4Cached (cfg w h fps "cache_v2_full.mp4") (doc "EDITED" (Color.rgb 80uy 160uy 255uy)) (Render.FrameCache()) |> ignore
+    printfn "\n=== incremental render (%d frames total) ===" total
+    printfn "  v1 cold:                       %d frames rendered in %.2fs" r1 sw1.Elapsed.TotalSeconds
+    printfn "  v2 (edit middle 2–4s):         %d frames rendered in %.2fs  (%d reused from cache)" r2 sw2.Elapsed.TotalSeconds (total - r2)
+    printfn "  → compare cache_v2.mp4 (incremental) vs cache_v2_full.mp4 (cold) for correctness\n"
+
+// ════════════════════ STREAMING — bounded-memory footage decode, verified vs in-RAM ════════════════════
+let streamtest () =
+    let w, h, fps = 854, 480, 30
+    let durS = 4.0
+    let n = int (durS * float fps)
+    let frame : Frame = { W = float w; H = float h }
+    Fx.install (); Templates.install ()
+    let renderSerial clip =
+        let b = Raster.create ()
+        Array.init n (fun i -> (Renderer.Scene.render b w h (Clear Theme.bg :: eval frame clip ((float i / float fps) * 1.0<s>))).Px.ToArray())
+    // golden: in-RAM full decode
+    let golden = renderSerial (videoFor (durS * 1.0<s>) (Video.loadCached (asset "city.mp4") 0.0 durS w h fps))
+    // streaming, serial
+    let streamedSerial = renderSerial (videoStream (Video.stream (asset "city.mp4") 0.0 durS w h fps))
+    let mis1 = [ for i in 0 .. n - 1 do if golden.[i] <> streamedSerial.[i] then yield i ]
+    // streaming, batched-parallel (mimics renderToMp4's access pattern; fresh source)
+    let clip2 = videoStream (Video.stream (asset "city.mp4") 0.0 durS w h fps)
+    let par = max 2 (System.Environment.ProcessorCount - 1)
+    let backends = Array.init par (fun _ -> Raster.create ())
+    let got : uint32[][] = Array.zeroCreate n
+    let mutable i0 = 0
+    while i0 < n do
+        let cnt = min par (n - i0)
+        System.Threading.Tasks.Parallel.For(0, cnt, fun k ->
+            got.[i0 + k] <- (Renderer.Scene.render backends.[k] w h (Clear Theme.bg :: eval frame clip2 ((float (i0 + k) / float fps) * 1.0<s>))).Px.ToArray()) |> ignore
+        i0 <- i0 + cnt
+    let mis2 = [ for i in 0 .. n - 1 do if golden.[i] <> got.[i] then yield i ]
+    printfn "\n=== streaming check (%d frames, %dx%d, window 64) ===" n w h
+    printfn "  serial streaming vs in-RAM:          %s" (if List.isEmpty mis1 then "✓ pixel-identical" else sprintf "✗ %d differ %A" mis1.Length (List.truncate 8 mis1))
+    printfn "  batched-parallel streaming vs in-RAM: %s\n" (if List.isEmpty mis2 then "✓ pixel-identical" else sprintf "✗ %d differ %A" mis2.Length (List.truncate 8 mis2))
+
+// ════════════════════ MOTION — kinetic type / text-on-path / curve motion / particles ════════════════════
+let motion () =
+    let w, h, fps = 1280, 720, 30
+    let dur = 5.0<s>
+    let frame : Frame = { W = float w; H = float h }
+    let bg = solidBg dur (Color.rgb 12uy 12uy 20uy)
+    let gold = Solid Theme.gold
+    let confettiPieces = confetti 140 1234 [| Theme.gold; Theme.red; Color.rgb 80uy 160uy 255uy; Color.white |] frame
+    let content =
+        graphic dur (fun f t ->
+            aa (
+                // kinetic typography — letters rise + fade in, staggered
+                kineticText (Theme.anton ()) 120.0 gold 360.0 230.0 (riseStagger 0.06<s> 0.5<s> 60.0) "MOTION" t
+                // continuous wave on a subtitle
+                @ kineticText (Theme.load Theme.defaultBoldFontPath) 40.0 (Solid Color.white) 430.0 290.0 (waveStagger 8.0 1.2 0.6) "kinetic typography" t
+                // text on a circle
+                @ textOnPath (Theme.bebas ()) 46.0 (Solid Theme.gold) (circlePath (float w / 2.0) 470.0 150.0 (-1.7) false) "TEXT ON A PATH  -  ALONG A CURVE  -  "
+                // a token flying along a Bézier, oriented to its tangent
+                @ (let u = max 0.0 (min 1.0 (float t / 4.0))
+                   let p0, p1, p2, p3 = (120.0, 600.0), (400.0, 200.0), (900.0, 700.0), (1160.0, 320.0)
+                   let x, y = cubicBezier p0 p1 p2 p3 u
+                   let ang = cubicTangent p0 p1 p2 p3 u
+                   [ Group(aboutPivot x y (Matrix3x2.rotate ang), 1.0,
+                           [ FillTri(vec2 (x + 22.0) y, vec2 (x - 14.0) (y - 12.0), vec2 (x - 14.0) (y + 12.0), Theme.red) ]) ])
+                // particles falling under gravity
+                @ drawParticles 240.0 t confettiPieces))
+    renderToMp4 (cfg w h fps "motion.mp4") (layer bg [ content ])
+
+// ════════════════════ 2.5D — perspective / card-flip / parallax (renderer Group3D) ════════════════════
+let threed () =
+    let w, h, fps = 1280, 720, 30
+    let dur = 5.0<s>
+    let bg = videoFor dur (Video.loadCached (asset "jellyfish.mp4") 0.0 5.0 w h fps) |> tint Color.black 0.28
+    // big title that flips in around the Y axis with a slight downward tilt
+    let title =
+        comp "centeredLabel" [ "text", PStr "2.5D"; "size", PFloat 220.0; "color", PColor Theme.gold ] dur
+        |> flipInY 1.1<s> |> tiltX -0.16 |> perspectiveDist 850.0
+    // a perspective lower-third that gently swivels
+    let lower =
+        comp "lowerThird" [ "name", PStr "PERSPECTIVE"; "title", PStr "Group3D · card-flip · swivel"; "accent", PColor Theme.red ] dur
+        |> swivelY 0.14 0.3 |> perspectiveDist 700.0
+    renderToMp4 (cfg w h fps "threed.mp4") (layer bg [ title; lower ])
+
+// ════════════════════ PARALLEL RENDER — thread-safety verification ════════════════════
+// Renders text-heavy + footage frames serially (golden) then concurrently (each task on its own
+// backend, stressing the SHARED text/glyph/font caches + thread-local fbPool). Asserts the
+// concurrent output is pixel-IDENTICAL to serial — i.e. no cache races corrupt frames.
+let partest () =
+    let w, h, fps = 1280, 720, 30
+    Fx.install (); Templates.install ()
+    let frame : Frame = { W = float w; H = float h }
+    let clip =
+        layer (videoFor 3.0<s> (Video.loadCached (asset "city.mp4") 0.0 3.0 w h fps) |> tint Color.black 0.25)
+              [ comp "centeredLabel" [ "text", PStr "PARALLEL RENDER"; "size", PFloat 96.0; "color", PColor Theme.gold ] 3.0<s>
+                comp "lowerThird" [ "name", PStr "THREAD SAFETY"; "title", PStr "fbPool · text caches · glyph cache"; "accent", PColor Theme.red ] 3.0<s>
+                comp "cornerBadge" [ "text", PStr "x12" ] 3.0<s> ]
+    let n = 90
+    let renderAt (backend: Backend) i =
+        let t = (float i / float fps) * 1.0<s>
+        (Renderer.Scene.render backend w h (Clear Theme.bg :: eval frame clip t)).Px.ToArray()
+    // serial golden (single backend, one thread)
+    let golden = let b = Raster.create () in Array.init n (renderAt b)
+    // concurrent: each frame on its own fresh backend → backend state isolated, GLOBAL caches stressed
+    let got : uint32[][] = Array.zeroCreate n
+    System.Threading.Tasks.Parallel.For(0, n, fun i -> got.[i] <- renderAt (Raster.create ()) i) |> ignore
+    let mismatches = [ for i in 0 .. n - 1 do if golden.[i] <> got.[i] then yield i ]
+    printfn "\n=== parallel render check: %d frames, %d threads ===" n System.Environment.ProcessorCount
+    match mismatches with
+    | [] -> printfn "  ✓ PASS — concurrent frames are pixel-identical to serial (caches thread-safe)\n"
+    | xs -> printfn "  ✗ FAIL — %d frame(s) differ: %A\n" (List.length xs) (List.truncate 10 xs)
+
 // ════════════════════ FONT SPECIMEN (verification) ════════════════════
 let fonts () =
     let w, h = 1280, 720
@@ -679,4 +851,11 @@ let all : (string * (unit -> unit)) list =
       "scored", scored
       "compose", compose
       "cropmask", cropmask
-      "difftest", difftest ]
+      "difftest", difftest
+      "gaps", gaps
+      "scenefold", scenefold
+      "partest", partest
+      "threed", threed
+      "motion", motion
+      "streamtest", streamtest
+      "cachetest", cachetest ]

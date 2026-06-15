@@ -34,6 +34,16 @@ module Dsl =
             let fb = Video.frameAt src t
             [ DrawImage(fb, rect 0.0 0.0 (float src.W) (float src.H), rect 0.0 0.0 frame.W frame.H, true) ])
 
+    /// A footage clip backed by a STREAMING source (bounded memory; decodes on demand). Use for
+    /// long / high-resolution footage that would be too big to decode fully into RAM.
+    let videoStream (src: Video.StreamSource) : Clip =
+        Graphic(src.Duration, fun frame t ->
+            let fb = src.FrameAt t
+            [ DrawImage(fb, rect 0.0 0.0 (float src.W) (float src.H), rect 0.0 0.0 frame.W frame.H, true) ])
+    /// Streaming footage WITH its own audio bound (moves/retimes as a unit).
+    let videoStreamSnd (src: Video.StreamSource) : Clip =
+        Over(videoStream src, Audio(src.Duration, { Path = src.Path; In = src.Start; Gain = 1.0; FadeIn = 0.0<s>; FadeOut = 0.0<s>; Speed = 1.0 }))
+
     // ── audio ──
     /// Audio-only clip from a file: source in-point `inSec`, timeline length `dur` (silent picture).
     let audioClip (path: string) (inSec: float) (dur: float<s>) : Clip =
@@ -61,6 +71,29 @@ module Dsl =
     let shift (d: float<s>) (c: Clip) = Shift(c, d)
     let xform (m: Matrix3x2) (c: Clip) = Transform(c, m)
     let speed (f: float) (c: Clip) = Speed(c, f)
+
+    // ── blend modes: composite a layer onto what is UNDER it with a Porter-Duff / separable mode.
+    //    `over base (screen glow)` screens the glow onto the base. Wraps any clip. ──
+    let blend (mode: BlendMode) (c: Clip) : Clip = Blended(mode, c)
+    let screen c = blend Screen c
+    let multiply c = blend Multiply c
+    let overlay c = blend Overlay c
+    let lighten c = blend Lighten c
+    let darken c = blend Darken c
+    let colorDodge c = blend ColorDodge c          // additive-style glow
+    let difference c = blend Difference c
+
+    // ── time remapping (generalises constant `speed`): ramps, freeze-frames, reverse ──
+    /// Ease playback speed from `s0`× to `s1`× across the clip (output duration derived).
+    let timeRamp (s0: float) (s1: float) (c: Clip) : Clip = TimeMap(c, Ramp(s0, s1))
+    let rampUp (s: float) c = timeRamp 1.0 s c
+    let rampDown (s: float) c = timeRamp s 1.0 c
+    /// Hold a single source frame (at source time `at`) for `hold` seconds — a freeze frame.
+    let freezeAt (at: float<s>) (hold: float<s>) (c: Clip) : Clip = TimeMap(c, Freeze(at, hold))
+    /// Play the clip backwards.
+    let reverse (c: Clip) : Clip = TimeMap(c, Reverse)
+    /// Arbitrary time remap: `dur` output, mapping output-local → source-local time.
+    let timeMapF (dur: float<s>) (f: float<s> -> float<s>) (c: Clip) : Clip = TimeMap(c, Remap(dur, f))
     /// Chain clips with a per-gap transition builder, e.g. `chain (crossfade 0.5<s>) [a;b;c]`.
     let chain (mk: Clip -> Clip -> Clip) (clips: Clip list) : Clip =
         match clips with
@@ -100,6 +133,38 @@ module Dsl =
         withXf (fun x -> { x with Scale = A.tween 0.7 1.0 (float d) (Ease.easeOutBack 2.0)
                                   Opacity = A.tween 0.0 1.0 (float d * 0.5) Ease.easeOutCubic }) c
     let appear (d: float<s>) c = withXf (fun x -> { x with Opacity = A.tween 0.0 1.0 (float d) Ease.easeOutCubic }) c
+
+    // ── 2.5D: animated 3D / perspective transform of a whole clip (renderer Group3D).
+    //    Parallax, card flips, perspective lower-thirds. Chained calls merge into one Place3D. ──
+    let private pi = System.Math.PI
+    let private idXf3 : Xf3 =
+        { X = A.constant 0.0; Y = A.constant 0.0; Z = A.constant 0.0
+          RotX = A.constant 0.0; RotY = A.constant 0.0; RotZ = A.constant 0.0
+          Scale = A.constant 1.0; Opacity = A.constant 1.0; Persp = 1200.0; Pivot = None }
+    let private withXf3 (f: Xf3 -> Xf3) (c: Clip) : Clip =
+        match c with Place3D (inner, xf) -> Place3D(inner, f xf) | _ -> Place3D(c, f idXf3)
+    /// Perspective distance in px (smaller = stronger foreshortening).
+    let perspectiveDist (d: float) c = withXf3 (fun x -> { x with Persp = d }) c
+    let pivot3 (px: float) (py: float) c = withXf3 (fun x -> { x with Pivot = Some(fun _ -> px, py) }) c
+    // constant pose
+    let tiltX (rad: float) c = withXf3 (fun x -> { x with RotX = A.constant rad }) c
+    let tiltY (rad: float) c = withXf3 (fun x -> { x with RotY = A.constant rad }) c
+    let tiltZ (rad: float) c = withXf3 (fun x -> { x with RotZ = A.constant rad }) c
+    let depth (z: float) c = withXf3 (fun x -> { x with Z = A.constant z }) c
+    let scale3 (v: float) c = withXf3 (fun x -> { x with Scale = A.constant v }) c
+    let place3 (px: float) (py: float) c = withXf3 (fun x -> { x with X = A.constant px; Y = A.constant py }) c
+    // animated channels (local time, seconds)
+    let animRotX (a: Anim<float>) c = withXf3 (fun x -> { x with RotX = a }) c
+    let animRotY (a: Anim<float>) c = withXf3 (fun x -> { x with RotY = a }) c
+    let animRotZ (a: Anim<float>) c = withXf3 (fun x -> { x with RotZ = a }) c
+    let animZ (a: Anim<float>) c = withXf3 (fun x -> { x with Z = a }) c
+    // presets
+    /// Flip in around the Y axis (edge-on → facing) over d, with a quick fade.
+    let flipInY (d: float<s>) c =
+        withXf3 (fun x -> { x with RotY = A.tween (pi / 2.0) 0.0 (float d) Ease.easeOutCubic
+                                   Opacity = A.tween 0.0 1.0 (float d * 0.4) Ease.easeOutCubic }) c
+    /// Continuous gentle Y-axis swivel: amplitude rad at freq Hz.
+    let swivelY (amp: float) (freq: float) c = withXf3 (fun x -> { x with RotY = fun t -> amp * sin (t * freq * 2.0 * pi) }) c
 
     // ── crop / mask: clip-native region + shape (makes PiP / facecam fully compositional) ──
     /// Clip a clip's output to a shape (content stays in place). Shape is frame-aware.

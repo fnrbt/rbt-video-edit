@@ -29,19 +29,23 @@ module Scene =
           Pivot: (Frame -> float * float) option        // scale/rotate centre; None = frame centre
           Delay: float<s>                               // shifts this subtree's local clock (choreography)
           Life: float<s> option                         // visible window length after Delay; None = unbounded
-          Content: (Frame -> float<s> -> Cmd list) option   // a leaf (Component, footage frame, raw cmds)
+          Leaf: Clip option                             // a CLIP leaf — keeps audio/sequencing/transitions (the fold)
+          Content: (Frame -> float<s> -> Cmd list) option   // a raw-cmd leaf (Component, footage frame, raw cmds)
           Children: Node list }
 
     /// Identity node: no transform, no content, no children. Build everything from this.
     let empty : Node =
         { X = A.constant 0.0; Y = A.constant 0.0; Scale = A.constant 1.0
           Rotation = A.constant 0.0; Opacity = A.constant 1.0; Pivot = None
-          Delay = 0.0<s>; Life = None; Content = None; Children = [] }
+          Delay = 0.0<s>; Life = None; Leaf = None; Content = None; Children = [] }
 
     // ── constructors ──
     let group (children: Node list) : Node = { empty with Children = children }
     let leaf (content: Frame -> float<s> -> Cmd list) : Node = { empty with Content = Some content }
     let still (cmds: Cmd list) : Node = { empty with Content = Some (fun _ _ -> cmds) }
+    /// A whole CLIP as a scene leaf — its audio, sequencing and transitions survive (the fold:
+    /// Scene now lowers to `Place`/`Over`/`Shift`/`Trim`, one transform semantic with the clip algebra).
+    let sub (c: Clip) : Node = { empty with Leaf = Some c }
 
     // ── transform setters (pipe-friendly; each replaces one channel) ──
     let x (a: Channel) (n: Node) = { n with X = a }
@@ -82,21 +86,23 @@ module Scene =
     let stagger (gap: float<s>) (nodes: Node list) : Node list =
         nodes |> List.mapi (fun i n -> { n with Delay = n.Delay + float i * gap })
 
-    // ── evaluation: fold the tree into a Cmd list at parent-local time ──
-    let rec private evalNode (frame: Frame) (parentT: float<s>) (n: Node) : Cmd list =
-        let t = parentT - n.Delay
-        let visible = t >= 0.0<s> && (match n.Life with Some l -> t < l | None -> true)
-        if not visible then [] else
-        let own = match n.Content with Some f -> f frame t | None -> []
-        let body = own @ (n.Children |> List.collect (evalNode frame t))
-        if List.isEmpty body then [] else
-        let tt = float t
-        let s = n.Scale tt
-        let px, py = match n.Pivot with Some f -> f frame | None -> frame.W / 2.0, frame.H / 2.0
-        let core = aboutPivot px py (Matrix3x2.multiply (Matrix3x2.scale s s) (Matrix3x2.rotate (n.Rotation tt)))
-        let m = Matrix3x2.multiply core (Matrix3x2.translate (n.X tt) (n.Y tt))
-        [ Group(m, max 0.0 (min 1.0 (n.Opacity tt)), body) ]
+    // ── lowering: a node IS clip algebra. Transform → Place; Delay → Shift; Life → Trim;
+    //    children → Over. So a `sub` clip leaf keeps its audio/sequencing/transitions, and the
+    //    transform semantic is identical to `Place` (one evaluator). `dur` is the default leaf
+    //    duration for raw-cmd (`leaf`/`still`) content; `sub` clips carry their own. ──
+    let rec private lower (dur: float<s>) (n: Node) : Clip =
+        let leafClip =
+            match n.Leaf, n.Content with
+            | Some c, _ -> Some c
+            | None, Some f -> Some(Graphic(dur, f))
+            | None, None -> None
+        let baseClip = match leafClip with Some c -> c | None -> Blank dur
+        let body = n.Children |> List.fold (fun acc ch -> Over(acc, lower dur ch)) baseClip
+        let xf : Xf = { X = n.X; Y = n.Y; Scale = n.Scale; Rot = n.Rotation; Opacity = n.Opacity; Pivot = n.Pivot }
+        let placed = Place(body, xf)
+        let capped = match n.Life with Some l -> Trim(placed, 0.0<s>, l) | None -> placed
+        if n.Delay > 0.0<s> then Shift(capped, n.Delay) else capped
 
-    /// Lower a node tree into a clip of the given duration (plugs into the clip algebra).
-    let clip (dur: float<s>) (root: Node) : Clip =
-        Graphic(dur, fun frame t -> evalNode frame t root)
+    /// Lower a node tree into a clip (plugs into the clip algebra). `dur` is the default duration
+    /// for raw-cmd leaves; `sub` clip leaves keep their own durations.
+    let clip (dur: float<s>) (root: Node) : Clip = lower dur root

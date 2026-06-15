@@ -124,6 +124,15 @@ module Sexp =
     let private kwParams ctx (kw: Map<string, Sx>) (drop: string list) : Params =
         kw |> Map.filter (fun k _ -> not (List.contains k drop)) |> Map.map (fun _ v -> toParam ctx v)
 
+    let private parseBlend (s: string) : BlendMode =
+        match s.ToLowerInvariant() with
+        | "multiply" -> Multiply | "screen" -> Screen | "overlay" -> Overlay
+        | "lighten" | "add" -> Lighten | "darken" -> Darken
+        | "colordodge" | "dodge" -> ColorDodge | "colorburn" | "burn" -> ColorBurn
+        | "difference" | "diff" -> Difference | "exclusion" -> Exclusion
+        | "softlight" -> SoftLight | "hue" -> Hue | "saturation" -> Saturation | "luminosity" -> Luminosity
+        | _ -> Normal
+
     // ── build ──
     let rec build (ctx: Ctx) (sx: Sx) : Clip =
         match sx with
@@ -149,6 +158,13 @@ module Sexp =
             | "trim" -> Trim(child0 (), vdur ctx (kwv "start" |> Option.get), vdur ctx (kwv "len" |> Option.get))
             | "shift" -> Shift(child0 (), vdur ctx (kwv "by" |> Option.get))
             | "speed" -> Speed(child0 (), vfloat ctx pos.[0])
+            | "ramp" -> TimeMap(child0 (), Ramp(vfloat ctx pos.[0], vfloat ctx pos.[1]))
+            | "freeze" -> TimeMap(child0 (), Freeze(vdur ctx pos.[0], vdur ctx pos.[1]))
+            | "reverse" -> TimeMap(child0 (), Reverse)
+            | "blend" -> Blended(parseBlend (vsym ctx pos.[0]), child0 ())
+            | "screen" -> Blended(Screen, child0 ())
+            | "multiply" -> Blended(Multiply, child0 ())
+            | "overlay" -> Blended(Overlay, child0 ())
             | "place" -> buildPlace ctx kw (child0 ())
             | "mask" -> Timeline.Mask(child0 (), buildShape ctx (match pos with s :: _ -> s | [] -> kwv "shape" |> Option.get))
             | "reframe" -> Reframe(child0 (), buildRect ctx (match pos with s :: _ -> s | [] -> kwv "rect" |> Option.get))

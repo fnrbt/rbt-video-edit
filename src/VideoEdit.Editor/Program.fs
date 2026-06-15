@@ -47,6 +47,8 @@ let private kindColor (k: TKind) : Color =
     | _ -> Color.rgb 60uy 62uy 68uy
 
 type Msg = { Role: string; Body: string; Diff: string option }
+/// A clickable item in the Render dialog (shared by draw + hit-test). Group ∈ res|fps|qual|btn.
+type DlgItem = { X: float; Y: float; W: float; H: float; Label: string; Sel: bool; Group: string; Idx: int }
 
 [<EntryPoint>]
 let main argv =
@@ -54,6 +56,10 @@ let main argv =
     let docPath = argv |> Array.tryFind (fun (a: string) -> a.EndsWith ".sexp") |> Option.defaultValue "docs/features.sexp"
     let cfg, clip = Sexp.loadDoc (IO.File.ReadAllText docPath)
     let sourceLines = (IO.File.ReadAllText docPath).Replace("\t", "  ").Split('\n')
+    // Render-dialog option presets ("Source" = the document's own config).
+    let resPresets = [| "Source", (cfg.W, cfg.H); "1080p", (1920, 1080); "720p", (1280, 720); "480p", (854, 480) |]
+    let fpsPresets = [| "Source", cfg.Fps; "24", 24; "30", 30; "60", 60 |]
+    let qualPresets = [| "High", (18, "slow"); "Medium", (20, "medium"); "Fast", (23, "veryfast") |]
     let pw, ph = cfg.W, cfg.H
     let frameGeom = { W = float pw; H = float ph }
     let total = duration clip
@@ -83,6 +89,13 @@ let main argv =
     let mutable input = ""
     let mutable chatFocused = false      // keyboard → chat box when focused, else → transport
     let mutable mx, my = 0.0, 0.0
+    // ── render dialog ──
+    let mutable showDialog = false
+    let mutable dRes = 0
+    let mutable dFps = 0
+    let mutable dQual = 0
+    let mutable rendering = false
+    let mutable renderMsg = ""
     let sw = Stopwatch.StartNew()
     let mutable lastTick = 0.0
     let messages = ResizeArray<Msg>([
@@ -92,6 +105,7 @@ let main argv =
         { Role = "assistant"; Body = "Bumped its saturation and switched the accent to cyan."; Diff = Some "~ feature·THE GRID.accent #FFD200 → #00EAFF    ~ fx:saturate 1.12 → 1.4" } ])
 
     // ── geometry ──
+    let menuH = 26.0
     let chatW () = winW * 0.40
     let tabBarH = 34.0
     let tlH = 300.0
@@ -193,7 +207,7 @@ let main argv =
         let inputY = winH - inputH
         let pad = 16.0
         let msgCmds =
-            let mutable y = headerH + 14.0 - chatScroll
+            let mutable y = menuH + headerH + 14.0 - chatScroll
             [ for m in messages do
                 let isYou = m.Role = "you"
                 yield txtm 11.0 (if isYou then accent else dim) pad (y + 9.0) (if isYou then "You" else "Assistant")
@@ -217,30 +231,80 @@ let main argv =
                 y <- y + 16.0 ]
         let inputText = if input = "" then "Tell the editor what to change…" else input + "▏"
         let inputCol = if input = "" then faint else ink
-        [ FillRect(rect 0.0 0.0 cw winH, panelBg)
-          FillRect(rect 0.0 0.0 cw headerH, barBg); FillRect(rect 0.0 (headerH - 1.0) cw 1.0, loE)
-          FillRect(rect (cw - 1.0) 0.0 1.0 winH, loE) ]
-        @ [ AntiAlias(4, [ txtm 11.5 dim pad 21.0 "Chat" ] @ [ Cmd.Clip(rectPath (rect 0.0 headerH cw (inputY - headerH)), NonZero, msgCmds) ]) ]
+        [ FillRect(rect 0.0 menuH cw (winH - menuH), panelBg)
+          FillRect(rect 0.0 menuH cw headerH, barBg); FillRect(rect 0.0 (menuH + headerH - 1.0) cw 1.0, loE)
+          FillRect(rect (cw - 1.0) menuH 1.0 (winH - menuH), loE) ]
+        @ [ AntiAlias(4, [ txtm 11.5 dim pad (menuH + 21.0) "Chat" ] @ [ Cmd.Clip(rectPath (rect 0.0 (menuH + headerH) cw (inputY - menuH - headerH)), NonZero, msgCmds) ]) ]
         @ [ FillRect(rect 0.0 inputY cw inputH, panelBg); FillRect(rect 0.0 inputY cw 1.0, hair) ]
         @ bevel false pad (inputY + 12.0) (cw - pad * 2.0) (inputH - 24.0) well
         @ [ AntiAlias(4, [ txtm 13.0 inputCol (pad + 12.0) (inputY + inputH / 2.0 + 4.0) inputText ]) ]
+
+    // ── menu bar (one item: Render) ──
+    let menuItemX0, menuItemX1 = 8.0, 72.0
+    let menuBar (w: float) : Cmd list =
+        [ FillRect(rect 0.0 0.0 w menuH, barBg); FillRect(rect 0.0 (menuH - 1.0) w 1.0, loE) ]
+        @ (if showDialog then [ FillRect(rect menuItemX0 0.0 (menuItemX1 - menuItemX0) menuH, panelBg)
+                                FillRect(rect menuItemX0 0.0 (menuItemX1 - menuItemX0) 2.0, accent) ] else [])
+        @ [ txtm 12.5 ink (menuItemX0 + 10.0) (menuH / 2.0 + 4.5) "Render" ]
+
+    // ── render dialog: option chips + buttons, laid out once and shared by draw + hit-test ──
+    let dialogItems (w: float) (h: float) : DlgItem list =
+        let dw, dh = 470.0, 312.0
+        let dx, dy = floor ((w - dw) / 2.0), floor ((h - dh) / 2.0)
+        let chipW, gap, chipX0 = 80.0, 8.0, 112.0
+        let mk grp idx label x y ww = { X = x; Y = y; W = ww; H = 28.0; Label = label; Sel = false; Group = grp; Idx = idx }
+        let row grp (opts: string[]) (sel: int) (cy: float) =
+            [ for j in 0 .. opts.Length - 1 ->
+                { mk grp j opts.[j] (dx + chipX0 + float j * (chipW + gap)) (cy - 14.0) chipW with Sel = (sel = j) } ]
+        (row "res" (resPresets |> Array.map fst) dRes (dy + 74.0))
+        @ (row "fps" (fpsPresets |> Array.map fst) dFps (dy + 116.0))
+        @ (row "qual" (qualPresets |> Array.map fst) dQual (dy + 158.0))
+        @ [ { mk "btn" 0 "Cancel" (dx + dw - 204.0) (dy + dh - 44.0) 90.0 with H = 30.0 }
+            { mk "btn" 1 "Render" (dx + dw - 104.0) (dy + dh - 44.0) 90.0 with H = 30.0 } ]
+
+    let dialogCmds (w: float) (h: float) : Cmd list =
+        if not showDialog then [] else
+        let dw, dh = 470.0, 312.0
+        let dx, dy = floor ((w - dw) / 2.0), floor ((h - dh) / 2.0)
+        let outp = "out/" + IO.Path.GetFileNameWithoutExtension docPath + ".mp4"
+        let chip (it: DlgItem) =
+            if it.Group = "btn" then
+                let prim = it.Label = "Render"
+                bevel true it.X it.Y it.W it.H (if prim then accent else barBg)
+                @ [ txtm 12.5 (if prim then Color.rgb 18uy 18uy 22uy else ink)
+                        (it.X + (it.W - Text.measureWidth (fUi ()) 12.5 it.Label) / 2.0) (it.Y + 20.0) it.Label ]
+            else
+                (if it.Sel then bevel false it.X it.Y it.W it.H accent else bevel true it.X it.Y it.W it.H well)
+                @ [ txtm 12.0 (if it.Sel then Color.rgb 18uy 18uy 22uy else ink) (it.X + 10.0) (it.Y + 18.0) it.Label ]
+        [ FillRect(rect 0.0 0.0 w h, Color.rgba 0uy 0uy 0uy 150uy) ]
+        @ bevel true dx dy dw dh panelBg
+        @ [ AntiAlias(4,
+              [ txt 15.5 ink (dx + 24.0) (dy + 33.0) "Render"
+                FillRect(rect dx (dy + 46.0) dw 1.0, loE)
+                txtm 12.0 dim (dx + 24.0) (dy + 77.0) "Resolution"
+                txtm 12.0 dim (dx + 24.0) (dy + 119.0) "Frame rate"
+                txtm 12.0 dim (dx + 24.0) (dy + 161.0) "Quality"
+                txtm 12.0 dim (dx + 24.0) (dy + 200.0) "Output"
+                txtmono 11.0 ink (dx + 112.0) (dy + 200.0) outp
+                txtm 11.0 (if rendering then accent else dim) (dx + 24.0) (dy + 224.0) renderMsg ]
+              @ (dialogItems w h |> List.collect chip)) ]
 
     // ── right pane: tabs + content + timeline ──
     let buildWindow (w: float) (h: float) (fb: Framebuffer option) =
         winW <- w; winH <- h
         let rx = rightX ()
-        let contentTop = tabBarH
+        let contentTop = menuH + tabBarH
         let tabW = 110.0
         let tabBtn i label =
             let bx = rx + float i * tabW
             let active = (tab = i)
-            [ FillRect(rect bx 0.0 tabW tabBarH, (if active then panelBg else barBg)) ]
-            @ (if active then [ FillRect(rect bx 0.0 tabW 2.0, accent) ] else [ FillRect(rect bx (tabBarH - 1.0) tabW 1.0, loE) ])
-            @ [ txtm 12.5 (if active then ink else dim) (bx + 16.0) 22.0 label ]
+            [ FillRect(rect bx menuH tabW tabBarH, (if active then panelBg else barBg)) ]
+            @ (if active then [ FillRect(rect bx menuH tabW 2.0, accent) ] else [ FillRect(rect bx (menuH + tabBarH - 1.0) tabW 1.0, loE) ])
+            @ [ txtm 12.5 (if active then ink else dim) (bx + 16.0) (menuH + 22.0) label ]
         let tabs =
-            [ FillRect(rect rx 0.0 (w - rx) tabBarH, barBg); FillRect(rect rx (tabBarH - 1.0) (w - rx) 1.0, loE) ]
+            [ FillRect(rect rx menuH (w - rx) tabBarH, barBg); FillRect(rect rx (menuH + tabBarH - 1.0) (w - rx) 1.0, loE) ]
             @ [ AntiAlias(4, tabBtn 0 "Preview" @ tabBtn 1 "Source"
-                             @ [ txtmono 11.0 faint (w - 234.0) 22.0 (sprintf "%s   %s   %s" (fmt (clampT playhead)) backendName (IO.Path.GetFileName docPath)) ]) ]
+                             @ [ txtmono 11.0 faint (w - 234.0) (menuH + 22.0) (sprintf "%s   %s   %s" (fmt (clampT playhead)) backendName (IO.Path.GetFileName docPath)) ]) ]
         // tab 0 = the projections (preview + timeline); tab 1 = the source (the truth), full height
         let content =
             if tab = 0 then
@@ -264,7 +328,7 @@ let main argv =
                           y <- y + lineH ]
                 (bevel false rx contentTop (w - rx) sH well)
                 @ [ Cmd.Clip(rectPath (rect rx contentTop (w - rx) sH), NonZero, [ AntiAlias(4, lines) ]) ]
-        [ FillRect(rect 0.0 0.0 w h, panelBg) ] @ chatCmds () @ tabs @ content
+        [ FillRect(rect 0.0 0.0 w h, panelBg) ] @ chatCmds () @ tabs @ content @ menuBar w @ dialogCmds w h
 
     let win : IWindow =
         let title = "VideoEdit — Editor"
@@ -277,6 +341,7 @@ let main argv =
         let outPng = argv.[si + 1]
         let t = (if argv.Length > si + 2 then (match Double.TryParse argv.[si + 2] with | true, v -> v | _ -> 6.0) else 6.0) * 1.0<s>
         playhead <- clampT t
+        if Array.contains "--dialog" argv then showDialog <- true
         let ww, wh = 1500, 940
         let fb = renderFrame (clampT t)
         let winFb = Renderer.Scene.render (Raster.create ()) ww wh (buildWindow (float ww) (float wh) (Some fb))
@@ -299,14 +364,47 @@ let main argv =
             messages.Add { Role = "assistant"; Body = "(AI isn't connected yet — this is the editor shell. Wiring chatkit's agent next.)"; Diff = None }
             input <- ""; win.RequestRedraw()
 
+    /// Render the loaded document to MP4 with the dialog's chosen options (off the UI thread).
+    let doRender () =
+        if not rendering then
+            let _, (rw, rh) = resPresets.[dRes]
+            let _, fps = fpsPresets.[dFps]
+            let _, (crf, preset) = qualPresets.[dQual]
+            let outp = "out/" + IO.Path.GetFileNameWithoutExtension docPath + ".mp4"
+            let rc : RenderConfig = { W = rw; H = rh; Fps = fps; Background = cfg.Background; Output = outp; Crf = crf; Preset = preset }
+            rendering <- true
+            renderMsg <- sprintf "Rendering  %d×%d  %dfps …" rw rh fps
+            win.RequestRedraw()
+            IO.Directory.CreateDirectory "out" |> ignore
+            System.Threading.Tasks.Task.Run(fun () ->
+                (try renderToMp4 rc clip; renderMsg <- "✓  wrote " + outp
+                 with e -> renderMsg <- "✗  " + e.Message)
+                rendering <- false
+                win.RequestRedraw())
+            |> ignore
+
     let onInput (ev: InputEvent) =
         match ev with
         | MouseMove(x, y) -> (if panning then pan <- max 0.0 (pan - (x - mx) / zoom); win.RequestRedraw()); mx <- x; my <- y
+        | MouseButton(0, true, x, y) when showDialog ->
+            mx <- x; my <- y
+            match dialogItems winW winH |> List.tryFind (fun it -> x >= it.X && x <= it.X + it.W && y >= it.Y && y <= it.Y + it.H) with
+            | Some it ->
+                (match it.Group with
+                 | "res" -> dRes <- it.Idx
+                 | "fps" -> dFps <- it.Idx
+                 | "qual" -> dQual <- it.Idx
+                 | _ -> if it.Label = "Render" then doRender () else (showDialog <- false))
+                win.RequestRedraw()
+            | None -> ()                                         // click outside controls: stay open (modal)
+        | MouseButton(0, true, x, y) when y < menuH ->
+            mx <- x; my <- y
+            if x >= menuItemX0 && x <= menuItemX1 then showDialog <- true; win.RequestRedraw()
         | MouseButton(0, true, x, y) ->
             mx <- x; my <- y
             let rx = rightX ()
             chatFocused <- (x < rx)                              // click chat → type; click right pane → space plays
-            if y < tabBarH && x >= rx then
+            if y >= menuH && y < menuH + tabBarH && x >= rx then
                 tab <- (if x < rx + 110.0 then 0 elif x < rx + 220.0 then 1 else tab); win.RequestRedraw()
             elif tab = 0 && y >= tlTop () && x >= rx then
                 if y < tlTop () + 24.0 && x < rx + 32.0 then     // play/pause button
@@ -328,6 +426,9 @@ let main argv =
                 pan <- max 0.0 (tAt - (ax - trackX ()) / zoom); win.RequestRedraw()
             elif mx >= rightX () && tab = 1 then srcScroll <- max 0.0 (srcScroll - dy * 40.0); win.RequestRedraw()
             else chatScroll <- max 0.0 (chatScroll - dy * 40.0); win.RequestRedraw()
+        | KeyDown(kc, _) when showDialog ->
+            if kc = 9 then showDialog <- false; win.RequestRedraw()          // Escape closes the dialog
+            elif kc = 36 then doRender ()                                    // Enter renders
         | KeyDown(kc, _) ->
             if kc = 50 || kc = 62 then shift <- true
             elif chatFocused then

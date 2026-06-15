@@ -38,6 +38,26 @@ module Timeline =
         { X: Anim<float>; Y: Anim<float>; Scale: Anim<float>; Rot: Anim<float>
           Opacity: Anim<float>; Pivot: (Frame -> float * float) option }
 
+    /// Animated 3D transform of a whole clip (2.5D): the clip is rendered flat then warped in
+    /// perspective via the renderer's `Group3D`. Rotations are about the pivot (default frame
+    /// centre); `Persp` is the CSS-style perspective distance in px (smaller = stronger). Enables
+    /// parallax, card flips, perspective lower-thirds, cube transitions. Channels are local-time.
+    type Xf3 =
+        { X: Anim<float>; Y: Anim<float>; Z: Anim<float>
+          RotX: Anim<float>; RotY: Anim<float>; RotZ: Anim<float>
+          Scale: Anim<float>; Opacity: Anim<float>
+          Persp: float; Pivot: (Frame -> float * float) option }
+
+    /// Time remapping of a whole clip — generalises constant `Speed`. The PICTURE is retimed
+    /// exactly; AUDIO uses the effective average speed (Ramp/Remap) or is dropped (Reverse/Freeze,
+    /// which don't map to a single constant tempo). Ramp/Freeze/Reverse are serializable; Remap is
+    /// an escape hatch (arbitrary output-local → source-local time).
+    type TimeWarp =
+        | Ramp of fromSpeed: float * toSpeed: float            // ease playback speed s0→s1 across the clip
+        | Freeze of at: float<s> * hold: float<s>             // hold a single source frame for `hold` seconds
+        | Reverse                                             // play the clip backwards
+        | Remap of dur: float<s> * map: (float<s> -> float<s>) // arbitrary output-local → source-local time
+
     type Clip =
         // primitives
         | Blank of dur: float<s>
@@ -51,10 +71,13 @@ module Timeline =
         | Trim of Clip * start: float<s> * len: float<s>
         | Shift of Clip * delay: float<s>
         | Transform of Clip * Matrix3x2                          // static affine → Group
-        | Place of Clip * Xf                                     // animated transform of a whole clip (as a unit)
+        | Place of Clip * Xf                                     // animated 2D transform of a whole clip (as a unit)
+        | Place3D of Clip * Xf3                                  // animated 3D/perspective transform (2.5D)
         | Mask of Clip * (Frame -> PathSeg list)                 // clip output to a shape (content in place)
         | Reframe of Clip * Rect                                 // show a sub-region remapped to fill the frame
         | Speed of Clip * float                                  // dur = dur c / factor
+        | TimeMap of Clip * TimeWarp                             // general time remap (ramp / freeze / reverse / arbitrary)
+        | Blended of BlendMode * Clip                            // composite this layer onto what's below with a blend mode
         // open extension points (identity resolved via registry)
         | Apply of EffectRef * Clip                              // any per-clip, time-varying effect
         | Between of TransitionRef * Clip * Clip                 // any A→B transition over Dur overlap
@@ -94,8 +117,15 @@ module Timeline =
         | Over (a, b) -> max (duration a) (duration b)
         | Trim (_, _, len) -> len
         | Shift (c, d) -> d + duration c
-        | Transform (c, _) | Apply (_, c) | Place (c, _) | Mask (c, _) | Reframe (c, _) -> duration c
+        | Transform (c, _) | Apply (_, c) | Place (c, _) | Place3D (c, _) | Mask (c, _) | Reframe (c, _) -> duration c
+        | Blended (_, c) -> duration c
         | Speed (c, f) -> duration c / f
+        | TimeMap (c, w) ->
+            match w with
+            | Ramp (s0, s1) -> let s = s0 + s1 in if s <= 0.0 then duration c else 2.0 * duration c / s
+            | Freeze (_, hold) -> hold
+            | Reverse -> duration c
+            | Remap (d, _) -> d
         | Component (d, _) -> d
         | Section (_, _, c) -> duration c
         | Inst ref -> match resolveTemplate ref with Some c -> duration c | None -> 0.0<s>
@@ -136,6 +166,23 @@ module Timeline =
                     let core = aboutPivot px py (Matrix3x2.multiply (Matrix3x2.scale s s) (Matrix3x2.rotate (xf.Rot tt)))
                     let m = Matrix3x2.multiply core (Matrix3x2.translate (xf.X tt) (xf.Y tt))
                     [ Group(m, max 0.0 (min 1.0 (xf.Opacity tt)), cmds) ]
+            | Place3D (inner, xf) ->
+                let cmds = eval frame inner t
+                if List.isEmpty cmds then []
+                else
+                    let tt = float t
+                    let cx, cy = match xf.Pivot with Some f -> f frame | None -> frame.W / 2.0, frame.H / 2.0
+                    let s = xf.Scale tt
+                    let inline mul a b = Matrix4x4.multiply a b
+                    let scaleRot =
+                        mul (Matrix4x4.scale s s 1.0)
+                            (mul (Matrix4x4.rotateX (xf.RotX tt)) (mul (Matrix4x4.rotateY (xf.RotY tt)) (Matrix4x4.rotateZ (xf.RotZ tt))))
+                    let aboutPivot3 = mul (mul (Matrix4x4.translate -cx -cy 0.0) scaleRot) (Matrix4x4.translate cx cy 0.0)
+                    let positioned = mul aboutPivot3 (Matrix4x4.translate (xf.X tt) (xf.Y tt) (xf.Z tt))
+                    // perspective vanishing point at the pivot, not the coordinate origin
+                    let persp = mul (mul (Matrix4x4.translate -cx -cy 0.0) (Matrix4x4.perspective xf.Persp)) (Matrix4x4.translate cx cy 0.0)
+                    let m4 = mul positioned persp
+                    [ Group3D(m4, max 0.0 (min 1.0 (xf.Opacity tt)), cmds) ]
             | Mask (inner, shape) ->
                 let cmds = eval frame inner t
                 if List.isEmpty cmds then [] else [ Cmd.Clip(shape frame, NonZero, cmds) ]
@@ -149,6 +196,20 @@ module Timeline =
                     let sy = if rh <= 0.0 then 1.0 else frame.H / rh
                     [ Group(Matrix3x2.multiply (Matrix3x2.translate -rx -ry) (Matrix3x2.scale sx sy), 1.0, cmds) ]
             | Speed (inner, f) -> eval frame inner (t * f)
+            | TimeMap (inner, w) ->
+                let innerT =
+                    match w with
+                    | Ramp (s0, s1) ->
+                        let dOut = duration c                          // warped output duration
+                        if dOut <= 0.0<s> then 0.0<s>
+                        else s0 * t + (s1 - s0) * t * t / (2.0 * dOut)  // ∫₀ᵗ speed(τ) dτ
+                    | Freeze (at, _) -> at
+                    | Reverse -> max 0.0<s> (duration inner - t - 0.0001<s>)  // keep the first frame in-range
+                    | Remap (_, f) -> f t
+                eval frame inner innerT
+            | Blended (mode, inner) ->
+                let cmds = eval frame inner t
+                if List.isEmpty cmds then [] else [ Cmd.Blend(mode, cmds) ]
             | Apply (eff, inner) ->
                 let cmds = eval frame inner t
                 match effects.TryGet eff.Name with
@@ -196,8 +257,15 @@ module Timeline =
                     acc <- acc + duration ch ]
             | Over (a, b) -> go start speed gain a @ go start speed gain b
             | Shift (inner, d) -> go (start + d) speed gain inner
-            | Transform (inner, _) | Place (inner, _) | Mask (inner, _) | Reframe (inner, _) -> go start speed gain inner
+            | Transform (inner, _) | Place (inner, _) | Place3D (inner, _) | Mask (inner, _) | Reframe (inner, _) | Blended (_, inner) -> go start speed gain inner
             | Speed (inner, f) -> go start (speed * f) gain inner
+            | TimeMap (inner, w) ->
+                match w with
+                | Reverse | Freeze _ -> []                          // no constant-tempo audio mapping → mute
+                | Ramp _ | Remap _ ->
+                    let dOut = duration c                            // warped output duration
+                    let avg = if dOut <= 0.0<s> then 1.0 else float (duration inner / dOut)
+                    go start (speed * avg) gain inner
             | Apply (eff, inner) ->
                 match eff.Name with
                 | "gain" -> go start speed (gain * pfloat eff.Params "g" 1.0) inner
@@ -218,5 +286,22 @@ module Timeline =
                                   Dur = segB - segA })
             | Between (tr, a, b) ->
                 let bStart = start + duration a - tr.Dur
-                go start speed gain a @ go bStart speed gain b
+                let audA = go start speed gain a
+                let audB = go bStart speed gain b
+                // Across the overlap [bStart, start+dur a], crossfade A's tail out and B's head in
+                // (default) so the two segments' audio blend rather than double up. `:audio "sum"`
+                // keeps the legacy summed behaviour. Continuous beds bound OUTSIDE the Between (via
+                // Over) are untouched — only per-segment audio at the boundary is faded.
+                match pstr tr.Params "audio" "crossfade" with
+                | "sum" | "none" -> audA @ audB
+                | _ when tr.Dur <= 0.0<s> -> audA @ audB        // a cut has no overlap to fade
+                | _ ->
+                    let d = tr.Dur
+                    let winStart, winEnd = bStart, start + duration a
+                    let eps = 0.01<s>
+                    let audA' = audA |> List.map (fun p ->
+                        if p.Start + p.Dur >= winStart - eps then { p with FadeOut = max p.FadeOut d } else p)
+                    let audB' = audB |> List.map (fun p ->
+                        if p.Start <= winEnd + eps then { p with FadeIn = max p.FadeIn d } else p)
+                    audA' @ audB'
         go 0.0<s> 1.0 1.0 root
