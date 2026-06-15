@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Program.fs" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../VideoEdit/VideoEdit.fsproj" />
+    <ProjectReference Include="../../../chatkit/Chatkit.fsproj" />
+    <ProjectReference Include="../../../widgets/platform/Platform.fsproj" />
+  </ItemGroup>
+</Project>

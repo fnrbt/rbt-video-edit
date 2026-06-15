@@ -185,7 +185,7 @@ let main argv =
         | MouseMove(x, y) ->
             if panning then pan <- max 0.0 (pan - (x - mx) / zoom); win.RequestRedraw()
             mx <- x; my <- y
-        | MouseButton(1, true, x, y) ->
+        | MouseButton(0, true, x, y) ->                                           // left button (platform reports 0-based)
             mx <- x; my <- y
             let vh = winH - barH - tlH
             let tlTop = winH - tlH
@@ -203,19 +203,21 @@ let main argv =
                         win.RequestRedraw()
                 else panning <- true; playhead <- clampT (tOfX x * 1.0<s>); win.RequestRedraw()   // seek + start pan
             elif y >= tlTop then playhead <- clampT (tOfX x * 1.0<s>); win.RequestRedraw()  // ruler → seek
-        | MouseButton(1, false, _, _) -> panning <- false
-        | MouseScroll(_, dy) ->
-            if my >= winH - tlH && mx >= gutter then                              // zoom about cursor
-                let tAt = tOfX mx
-                zoom <- max 2.0 (min 4000.0 (zoom * (if dy > 0.0 then 1.15 else 1.0 / 1.15)))
-                pan <- max 0.0 (tAt - (mx - gutter) / zoom)
-                win.RequestRedraw()
-        | KeyDown(_, ks) ->
-            match ks with
-            | 0x20u -> playing <- not playing; lastTick <- sw.Elapsed.TotalSeconds; win.RequestRedraw()
-            | 0xff51u -> playhead <- clampT (playhead - 1.0<s> / float cfg.Fps); win.RequestRedraw()
-            | 0xff53u -> playhead <- clampT (playhead + 1.0<s> / float cfg.Fps); win.RequestRedraw()
-            | 0xff50u -> playhead <- 0.0<s>; win.RequestRedraw()
+        | MouseButton(0, false, _, _) -> panning <- false
+        | MouseScroll(_, dy) ->                                                   // scroll/pinch → zoom the timeline
+            if zoom <= 0.0 then zoom <- fitZoom ()
+            let ax = if mx >= gutter then mx else gutter + (winW - gutter) / 2.0  // anchor at cursor, else track centre
+            let tAt = tOfX ax
+            let step = 1.08 ** abs dy
+            zoom <- max 2.0 (min 6000.0 (zoom * (if dy > 0.0 then step else 1.0 / step)))
+            pan <- max 0.0 (tAt - (ax - gutter) / zoom)
+            win.RequestRedraw()
+        | KeyDown(kc, _) ->                                                       // platform sends the X11 keycode (evdev)
+            match kc with
+            | 65 -> playing <- not playing; lastTick <- sw.Elapsed.TotalSeconds; win.RequestRedraw()   // space
+            | 113 -> playhead <- clampT (playhead - 1.0<s> / float cfg.Fps); win.RequestRedraw()        // ←
+            | 114 -> playhead <- clampT (playhead + 1.0<s> / float cfg.Fps); win.RequestRedraw()        // →
+            | 110 -> playhead <- 0.0<s>; win.RequestRedraw()                                            // Home
             | _ -> ()
         | Resize(w, h) -> winW <- float w; winH <- float h; win.RequestRedraw()
         | Close -> win.Close()
