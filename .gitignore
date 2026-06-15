@@ -1,0 +1,13 @@
+# build output
+bin/
+obj/
+
+# rendered artifacts (regenerable)
+out/
+out.mp4
+*.bgra
+
+# editor/OS cruft
+*.user
+.vs/
+.DS_Store

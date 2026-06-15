@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../../renderer/Renderer.fsproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="Core.fs" />
+    <Compile Include="Video.fs" />
+    <Compile Include="Anim.fs" />
+    <Compile Include="Theme.fs" />
+    <Compile Include="Components.fs" />
+    <Compile Include="Clip.fs" />
+    <Compile Include="Scene.fs" />
+    <Compile Include="Fx.fs" />
+    <Compile Include="Templates.fs" />
+    <Compile Include="Diff.fs" />
+    <Compile Include="TimelineView.fs" />
+    <Compile Include="Encoder.fs" />
+    <Compile Include="Render.fs" />
+    <Compile Include="Dsl.fs" />
+    <Compile Include="Sexp.fs" />
+  </ItemGroup>
+</Project>
