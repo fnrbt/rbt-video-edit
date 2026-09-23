@@ -1,4 +1,4 @@
-namespace VideoEdit
+namespace Rbt.VideoEdit
 
 open System
 open System.Text

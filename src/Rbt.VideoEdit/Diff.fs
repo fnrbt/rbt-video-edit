@@ -1,4 +1,4 @@
-namespace VideoEdit
+namespace Rbt.VideoEdit
 
 // NOTE: deliberately does NOT `open Renderer` — its `Cmd` DU has `Mask`/`Clip`/… cases that
 // would shadow our `Timeline` clip cases in these pattern matches. Diff only needs Core+Timeline.

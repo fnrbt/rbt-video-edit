@@ -1,6 +1,6 @@
-module VideoEdit.Sample.Program
+module Rbt.VideoEdit.Sample.Program
 
-open VideoEdit
+open Rbt.VideoEdit
 
 // Dispatcher: `dotnet run -- <scene> [<scene> ...]` renders the named scenes to out/.
 // With no args, lists the available scenes and the Fx catalog.

@@ -1,7 +1,7 @@
-module VideoEdit.Sample.Scenes
+module Rbt.VideoEdit.Sample.Scenes
 
 open Rbt.Renderer
-open VideoEdit
+open Rbt.VideoEdit
 
 // ── shared config ──
 let asset n = "assets/" + n

@@ -1,4 +1,4 @@
-module VideoEdit.Editor.Program
+module Rbt.VideoEdit.Editor.Program
 
 // The video editor shell: Chat (40%) | [Preview/Source tabs over Timeline] (60%).
 // AI isn't wired yet — the chat is seeded with example turns so the layout is checkable.
@@ -10,8 +10,8 @@ open Renderer
 open Platform
 open Platform.X11Window
 open Platform.WaylandWindow
-open VideoEdit
-open VideoEdit.TimelineView
+open Rbt.VideoEdit
+open Rbt.VideoEdit.TimelineView
 
 // ── theme: clean dark editor — neutral charcoal, crisp text, one restrained accent ──
 let private ink = Color.rgb 226uy 227uy 230uy      // primary text (off-white)

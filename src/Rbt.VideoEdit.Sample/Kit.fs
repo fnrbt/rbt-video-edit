@@ -1,7 +1,7 @@
-module VideoEdit.Sample.Kit
+module Rbt.VideoEdit.Sample.Kit
 
 open Rbt.Renderer
-open VideoEdit
+open Rbt.VideoEdit
 
 // ════════════════════════════════════════════════════════════════════════
 //  A drawing toolkit for the polished demos: font-parameterized text, scrims

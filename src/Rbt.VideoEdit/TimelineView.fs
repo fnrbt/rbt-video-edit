@@ -1,4 +1,4 @@
-namespace VideoEdit
+namespace Rbt.VideoEdit
 
 // NOTE: no `open Renderer` — Cmd.Mask would shadow our Timeline.Mask in the pattern matches.
 

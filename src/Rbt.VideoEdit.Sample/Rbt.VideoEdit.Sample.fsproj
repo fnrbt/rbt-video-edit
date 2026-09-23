@@ -4,7 +4,7 @@
     <TargetFramework>net10.0</TargetFramework>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="../VideoEdit/VideoEdit.fsproj" />
+    <ProjectReference Include="../Rbt.VideoEdit/Rbt.VideoEdit.fsproj" />
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Kit.fs" />

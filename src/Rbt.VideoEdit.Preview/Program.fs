@@ -1,4 +1,4 @@
-module VideoEdit.Preview.Program
+module Rbt.VideoEdit.Preview.Program
 
 open System
 open System.Diagnostics
@@ -7,8 +7,8 @@ open Renderer
 open Platform
 open Platform.X11Window
 open Platform.WaylandWindow
-open VideoEdit
-open VideoEdit.TimelineView
+open Rbt.VideoEdit
+open Rbt.VideoEdit.TimelineView
 
 // ── default clip (when no .sexp doc given) ──
 let private defaultClip () : RenderConfig * Clip =

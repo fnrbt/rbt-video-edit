@@ -8,7 +8,7 @@
     <Compile Include="Program.fs" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="../VideoEdit/VideoEdit.fsproj" />
+    <ProjectReference Include="../Rbt.VideoEdit/Rbt.VideoEdit.fsproj" />
     <!-- widgets windowing layer (X11 + Wayland, software/SHM present). Same Renderer assembly. -->
     <ProjectReference Include="../../../widgets/platform/Platform.fsproj" />
   </ItemGroup>

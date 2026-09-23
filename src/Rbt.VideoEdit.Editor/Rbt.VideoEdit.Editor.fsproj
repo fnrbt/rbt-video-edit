@@ -8,7 +8,7 @@
     <Compile Include="Program.fs" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="../VideoEdit/VideoEdit.fsproj" />
+    <ProjectReference Include="../Rbt.VideoEdit/Rbt.VideoEdit.fsproj" />
     <ProjectReference Include="../../../chatkit/Chatkit.fsproj" />
     <ProjectReference Include="../../../widgets/platform/Platform.fsproj" />
   </ItemGroup>
