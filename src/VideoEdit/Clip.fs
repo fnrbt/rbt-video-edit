@@ -1,6 +1,6 @@
 namespace VideoEdit
 
-open Renderer
+open Rbt.Renderer
 
 /// The clip algebra. Structural combinators are a closed DU; effects and transitions are
 /// OPEN — referenced by serializable name + params and resolved against registries at eval

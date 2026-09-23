@@ -1,6 +1,6 @@
 namespace VideoEdit
 
-open Renderer
+open Rbt.Renderer
 
 /// A loud, high-contrast "Japanese game show" palette + bold-font loading.
 module Theme =

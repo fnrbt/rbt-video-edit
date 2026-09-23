@@ -1,6 +1,6 @@
 namespace VideoEdit
 
-open Renderer
+open Rbt.Renderer
 
 /// Game-show graphical elements. Each is `cfg -> (Frame -> localTime -> Cmd list)` so it
 /// plugs straight into a `graphic` clip. titleCard/infoBox/countdownNumber/bulletList animate

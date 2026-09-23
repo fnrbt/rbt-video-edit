@@ -1,6 +1,6 @@
 namespace VideoEdit
 
-open Renderer
+open Rbt.Renderer
 
 /// Registers the built-in components as TEMPLATES (name + flat params), so a graphic can be a
 /// data reference (`Component(dur, {Name;Params})`) instead of an opaque closure. The closure

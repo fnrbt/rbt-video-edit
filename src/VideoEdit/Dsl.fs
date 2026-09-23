@@ -1,6 +1,6 @@
 namespace VideoEdit
 
-open Renderer
+open Rbt.Renderer
 
 /// The authoring surface: thin smart-constructors and operators over the clip algebra.
 /// Effects/transitions are named registry entries (see Fx.fs); the generic `effect` /

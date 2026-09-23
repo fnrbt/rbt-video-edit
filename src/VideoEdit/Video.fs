@@ -3,7 +3,7 @@ namespace VideoEdit
 open System
 open System.IO
 open System.Diagnostics
-open Renderer
+open Rbt.Renderer
 
 /// Decoded video footage: BGRA frames at W×H, indexed by time. Decoding shells out to the
 /// ffmpeg CLI (symmetric with the encoder) and cover-crops to exactly the requested size.

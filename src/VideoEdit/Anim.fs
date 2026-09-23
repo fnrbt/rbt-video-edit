@@ -1,6 +1,6 @@
 namespace VideoEdit
 
-open Renderer
+open Rbt.Renderer
 
 /// Pure, deterministic, time-driven animation. Easings are registry-resolved by name
 /// (open + serializable); keyframe tracks are the canonical data form; the `A` module is

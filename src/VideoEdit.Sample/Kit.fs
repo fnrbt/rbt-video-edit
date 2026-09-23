@@ -1,6 +1,6 @@
 module VideoEdit.Sample.Kit
 
-open Renderer
+open Rbt.Renderer
 open VideoEdit
 
 // ════════════════════════════════════════════════════════════════════════

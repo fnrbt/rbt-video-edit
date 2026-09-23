@@ -1,6 +1,6 @@
 namespace VideoEdit
 
-open Renderer
+open Rbt.Renderer
 
 /// Motion systems — pure, deterministic, time-driven generators of `Cmd list`:
 ///   • kinetic typography (per-glyph staggered entrances / continuous motion),

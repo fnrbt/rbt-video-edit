@@ -1,6 +1,6 @@
 module VideoEdit.Sample.Scenes
 
-open Renderer
+open Rbt.Renderer
 open VideoEdit
 
 // ── shared config ──
@@ -735,7 +735,7 @@ let streamtest () =
     Fx.install (); Templates.install ()
     let renderSerial clip =
         let b = Raster.create ()
-        Array.init n (fun i -> (Renderer.Scene.render b w h (Clear Theme.bg :: eval frame clip ((float i / float fps) * 1.0<s>))).Px.ToArray())
+        Array.init n (fun i -> (Rbt.Renderer.Scene.render b w h (Clear Theme.bg :: eval frame clip ((float i / float fps) * 1.0<s>))).Px.ToArray())
     // golden: in-RAM full decode
     let golden = renderSerial (videoFor (durS * 1.0<s>) (Video.loadCached (asset "city.mp4") 0.0 durS w h fps))
     // streaming, serial
@@ -750,7 +750,7 @@ let streamtest () =
     while i0 < n do
         let cnt = min par (n - i0)
         System.Threading.Tasks.Parallel.For(0, cnt, fun k ->
-            got.[i0 + k] <- (Renderer.Scene.render backends.[k] w h (Clear Theme.bg :: eval frame clip2 ((float (i0 + k) / float fps) * 1.0<s>))).Px.ToArray()) |> ignore
+            got.[i0 + k] <- (Rbt.Renderer.Scene.render backends.[k] w h (Clear Theme.bg :: eval frame clip2 ((float (i0 + k) / float fps) * 1.0<s>))).Px.ToArray()) |> ignore
         i0 <- i0 + cnt
     let mis2 = [ for i in 0 .. n - 1 do if golden.[i] <> got.[i] then yield i ]
     printfn "\n=== streaming check (%d frames, %dx%d, window 64) ===" n w h
@@ -816,7 +816,7 @@ let partest () =
     let n = 90
     let renderAt (backend: Backend) i =
         let t = (float i / float fps) * 1.0<s>
-        (Renderer.Scene.render backend w h (Clear Theme.bg :: eval frame clip t)).Px.ToArray()
+        (Rbt.Renderer.Scene.render backend w h (Clear Theme.bg :: eval frame clip t)).Px.ToArray()
     // serial golden (single backend, one thread)
     let golden = let b = Raster.create () in Array.init n (renderAt b)
     // concurrent: each frame on its own fresh backend → backend state isolated, GLOBAL caches stressed

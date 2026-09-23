@@ -1,7 +1,7 @@
 namespace VideoEdit
 
 open System
-open Renderer
+open Rbt.Renderer
 
 /// The library of effects (per-clip, time-varying) and transitions (A→B over an overlap),
 /// all registered into the open registries by name. install() is idempotent and called by

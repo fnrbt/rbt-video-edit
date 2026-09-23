@@ -1,6 +1,6 @@
 namespace VideoEdit
 
-open Renderer
+open Rbt.Renderer
 
 /// The full-render loop: sample the clip at each frame, rasterize headlessly, encode to MP4.
 /// Frames render in parallel (one rasterizer backend per worker slot) and are written to the
@@ -13,7 +13,7 @@ module Render =
     /// Render a single frame `i` to a framebuffer using the given backend.
     let renderFrameTo (cfg: RenderConfig) (frame: Frame) (root: Clip) (backend: Backend) (i: int) : Framebuffer =
         let t = (float i / float cfg.Fps) * 1.0<s>
-        Renderer.Scene.render backend cfg.W cfg.H (Clear cfg.Background :: eval frame root t)
+        Rbt.Renderer.Scene.render backend cfg.W cfg.H (Clear cfg.Background :: eval frame root t)
 
     /// A cache of rendered frames keyed by frame index, for INCREMENTAL re-render: after an edit,
     /// invalidate only the changed time-range and re-render reuses every untouched frame. This is

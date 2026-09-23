@@ -4,7 +4,7 @@ open System
 open System.Diagnostics
 open System.Globalization
 open System.Runtime.InteropServices
-open Renderer
+open Rbt.Renderer
 
 type RenderConfig =
     { W: int

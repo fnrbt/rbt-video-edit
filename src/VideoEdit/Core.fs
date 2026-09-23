@@ -1,6 +1,6 @@
 namespace VideoEdit
 
-open Renderer
+open Rbt.Renderer
 
 /// Shared foundations: the time unit, frame geometry, the serializable Param type,
 /// the generic open Registry, and small transform helpers.

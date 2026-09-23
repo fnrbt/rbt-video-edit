@@ -1,6 +1,6 @@
 namespace VideoEdit
 
-open Renderer
+open Rbt.Renderer
 
 /// A small scenegraph designed for VIDEO, not UI. The differences that matter:
 ///   • no reactivity, no events, no per-frame state — a node is a pure function of time;
