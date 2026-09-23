@@ -228,9 +228,11 @@ module Sexp =
         let spec = resolveAsset ctx pos.[0]
         let frm = match Map.tryFind "from" kw with Some v -> vsec ctx v | _ -> spec.From
         let len = match Map.tryFind "len" kw with Some v -> vsec ctx v | _ -> (match spec.Len with Some l -> l | None -> failwithf "sexp: video '%s' needs :len" spec.Path)
-        let src = Video.loadCached spec.Path frm len ctx.W ctx.H ctx.Fps
-        let clip = videoFor (len * 1.0<s>) src
-        let withSnd = match Map.tryFind "sound" kw with Some v when vbool ctx v -> withSound src clip | _ -> clip
+        let src = Video.stream spec.Path frm len ctx.W ctx.H ctx.Fps
+        let withSnd =
+            match Map.tryFind "sound" kw with
+            | Some v when vbool ctx v -> videoStreamSnd src
+            | _ -> videoStream src
         // label footage in the timeline by its asset/file name (render-transparent)
         Timeline.Section(IO.Path.GetFileNameWithoutExtension spec.Path, true, withSnd)
 
