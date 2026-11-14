@@ -20,15 +20,40 @@ module Theme =
         [ { Offset = 0.0; StopColor = Color.rgb 36uy 48uy 130uy }
           { Offset = 1.0; StopColor = Color.rgb 8uy 10uy 36uy } ]
 
-    // ── font cache + named families (downloaded OFL fonts live in ./fonts) ──
+    // ── font cache + named families (the OFL fonts in the repo's fonts/, copied next to the assembly) ──
     let private fontCache = System.Collections.Generic.Dictionary<string, Text.FontData>()
 
-    /// Load (and cache) a font by path. Safe to call per-frame.
+    type private Marker = class end
+
+    /// Where the bundled fonts are, whatever the working directory: RBT_VIDEO_FONTS
+    /// if set; else `fonts/` next to this assembly (the build copies them there);
+    /// else the first `fonts/` holding Poppins-Bold.ttf found walking up from the
+    /// assembly (a checkout); else `fonts/` under the working directory.
+    let fontDir : string =
+        let has (d: string) = not (isNull d) && System.IO.File.Exists(System.IO.Path.Combine(d, "Poppins-Bold.ttf"))
+        let env = System.Environment.GetEnvironmentVariable "RBT_VIDEO_FONTS"
+        if has env then env
+        else
+            let asmDir = System.IO.Path.GetDirectoryName(typeof<Marker>.Assembly.Location)
+            let rec up (d: string) =
+                if isNull d then None
+                elif has (System.IO.Path.Combine(d, "fonts")) then Some(System.IO.Path.Combine(d, "fonts"))
+                else up (System.IO.Path.GetDirectoryName d)
+            match (if System.String.IsNullOrEmpty asmDir then None else up asmDir) with
+            | Some d -> d
+            | None -> System.IO.Path.GetFullPath "fonts"
+
+    /// Load (and cache) a font by path. Safe to call per-frame. A relative path
+    /// that does not exist from the working directory is looked up in `fontDir`
+    /// (by its file name), so "Poppins-Bold.ttf" and "fonts/Poppins-Bold.ttf" work anywhere.
     let load (path: string) : Text.FontData =
         match fontCache.TryGetValue path with
         | true, f -> f
         | _ ->
-            let f = Text.loadFontFile path
+            let resolved =
+                if System.IO.Path.IsPathRooted path || System.IO.File.Exists path then path
+                else System.IO.Path.Combine(fontDir, System.IO.Path.GetFileName path)
+            let f = Text.loadFontFile resolved
             fontCache.[path] <- f
             f
 

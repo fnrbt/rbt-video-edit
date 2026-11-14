@@ -62,6 +62,13 @@ module Render =
             enc.Finish()
         rendered
 
+    /// Render the frame at time `t` and write it as a PNG (no ffmpeg involved).
+    let saveFramePng (cfg: RenderConfig) (root: Clip) (t: float<s>) (path: string) : unit =
+        Fx.install ()
+        Templates.install ()
+        let i = int (round (float t * float cfg.Fps))
+        Png.save path (renderFrameTo cfg { W = float cfg.W; H = float cfg.H } root (Raster.create ()) i)
+
     let renderToMp4 (cfg: RenderConfig) (root: Clip) : unit =
         Fx.install ()
         Templates.install ()
